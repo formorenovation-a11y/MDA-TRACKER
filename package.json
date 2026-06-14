@@ -1,0 +1,12 @@
+{
+  "name": "mda-capital-tracker",
+  "version": "1.0.0",
+  "description": "MDA Capital Group Construction Tracker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
