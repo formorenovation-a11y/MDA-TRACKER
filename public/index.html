@@ -240,8 +240,9 @@ function renderLedger(){
       <td><strong>${fmt(e.actual)}</strong></td>
       <td class="${vari>=0?"variance-pos":"variance-neg"}">${vari>=0?"+":""}${fmt(vari)}</td>
       <td>${canEdit()?`<div class="row-actions">
-        <button class="icon-btn" onclick="editEntry('${e.id}')"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8 2l2 2-6 6H2V8l6-6z" stroke="currentColor" stroke-width="1.2"/></svg></button>
-        <button class="icon-btn danger" onclick="openConfirm('${e.id}')"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+        <button class="icon-btn" onclick="editEntry('${e.id}')" title="Edit"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8 2l2 2-6 6H2V8l6-6z" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        <button class="icon-btn dup" onclick="duplicateEntry('${e.id}')" title="Duplicate"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="4" y="4" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 8V2a1 1 0 011-1h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+        <button class="icon-btn danger" onclick="openConfirm('${e.id}')" title="Delete"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
       </div>`:"—"}</td></tr>`;
   }).join(""):`<tr><td colspan="13"><div class="empty-state">
     <svg width="44" height="44" viewBox="0 0 44 44" fill="none"><rect x="7" y="10" width="30" height="27" rx="3" stroke="#ADADAD" stroke-width="1.5"/><path d="M14 18h16M14 24h11" stroke="#ADADAD" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -310,6 +311,33 @@ window.saveEntry=async()=>{
   }catch(err){showToast("Error: "+err.message);}
 };
 window.closeModal=()=>document.getElementById("entry-modal").classList.remove("open");
+
+// ── DUPLICATE ENTRY ──
+window.duplicateEntry=id=>{
+  if(!canEdit()) return;
+  const e=entries.find(x=>x.id===id); if(!e) return;
+  // Open modal pre-filled with entry data but cleared ID so it saves as new
+  editingId=null;
+  document.getElementById("modal-title").textContent="Duplicate Entry";
+  document.getElementById("f-date").value=new Date().toISOString().split("T")[0];
+  document.getElementById("f-lot").value=e.lot||"";
+  document.getElementById("f-cat").value=e.category||"";
+  document.getElementById("f-subcat").value=e.subcategory||"";
+  document.getElementById("f-desc").value=e.description||"";
+  document.getElementById("f-vendor").value=e.vendor||"";
+  document.getElementById("f-invoice").value="";
+  document.getElementById("f-payment").value=e.payment||"";
+  document.getElementById("f-status").value="PENDING";
+  document.getElementById("f-budgeted").value=e.budgeted||"";
+  document.getElementById("f-actual").value=e.actual||"";
+  document.getElementById("f-notes").value=e.notes||"";
+  document.getElementById("entry-modal").classList.add("open");
+  // Highlight the lot selector so user knows to change it
+  const lotSel=document.getElementById("f-lot");
+  lotSel.style.outline="2px solid var(--sand-accent)";
+  lotSel.style.borderColor="var(--sand-accent)";
+  setTimeout(()=>{lotSel.style.outline="";lotSel.style.borderColor="";},3000);
+};
 function clearForm(){["f-date","f-desc","f-vendor","f-invoice","f-budgeted","f-actual","f-notes"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});}
 
 // ── DELETE ──
@@ -592,6 +620,335 @@ window.confirmAIEntries=async()=>{
   closeAIModal(); showToast(`✓ ${saved} entr${saved===1?"y":"ies"} saved`);
 };
 
+
+// ══════════════════════════════════════════════════════
+// ── FINANCIALS MODULE ──
+// ══════════════════════════════════════════════════════
+
+// Hard cost categories (direct construction)
+const HARD_COST_CATS = [
+  "SITE PREPARATION","UTILITIES","FOUNDATION","FRAMING","ROOFING",
+  "EXTERIOR ENVELOPE","HVAC","PLUMBING","ELECTRICAL","INSULATION",
+  "DRYWALL","INTERIOR TRIM & MILLWORK","CABINETS & COUNTERTOPS",
+  "FLOORING","PAINTING","FIXTURES & APPLIANCES","EXTERIOR IMPROVEMENTS",
+  "CLEANING & PUNCH LIST","CONTINGENCY / CHANGE ORDERS"
+];
+const SOFT_COST_CATS = [
+  "LAND ACQUISITION","DESIGN & ENGINEERING","PERMITS & FEES",
+  "INSURANCE","BUILDER FEES","FINANCING COSTS"
+];
+
+let salePrices = {};
+
+async function loadSalePrices(){
+  const snap = await getDoc(doc(db,"settings","salePrices"));
+  if(snap.exists()) salePrices = snap.data();
+}
+window.saveSalePrices = async () => {
+  document.querySelectorAll("[data-sale-lot]").forEach(inp=>{
+    salePrices[inp.dataset.saleLot] = parseFloat(inp.value)||0;
+  });
+  await setDoc(doc(db,"settings","salePrices"),salePrices);
+  showToast("Sale prices saved");
+  renderFinancials();
+};
+
+// Augment loadSettings to also load sale prices
+const _origLoadSettings = loadSettings;
+loadSettings = async function(){
+  await _origLoadSettings();
+  await loadSalePrices();
+};
+
+function getFinData(lot){
+  const lotEntries = lot ? entries.filter(e=>e.lot===lot) : entries;
+  const paid    = lotEntries.filter(e=>e.status==="PAID");
+  const pending = lotEntries.filter(e=>e.status==="PENDING");
+  const active  = lotEntries.filter(e=>e.status!=="VOID");
+
+  const hardCost = active.filter(e=>HARD_COST_CATS.includes(e.category))
+                         .reduce((s,e)=>s+(parseFloat(e.actual)||0),0);
+  const softCost = active.filter(e=>SOFT_COST_CATS.includes(e.category))
+                         .reduce((s,e)=>s+(parseFloat(e.actual)||0),0);
+  const totalCost = hardCost + softCost;
+
+  const paidAmt    = paid.reduce((s,e)=>s+(parseFloat(e.actual)||0),0);
+  const pendingAmt = pending.reduce((s,e)=>s+(parseFloat(e.actual)||0),0);
+
+  // Budget from budgets object
+  const lotsToUse = lot ? [lot] : LOTS;
+  const totalBudget = lotsToUse.reduce((s,l)=>{
+    return s + Object.values(budgets[l]||{}).reduce((a,v)=>a+(parseFloat(v)||0),0);
+  },0);
+
+  // Sale prices
+  const totalSale = lotsToUse.reduce((s,l)=>s+(parseFloat(salePrices[l])||0),0);
+  const grossProfit = totalSale - totalCost;
+  const margin = totalSale > 0 ? (grossProfit/totalSale)*100 : 0;
+  const roi    = totalCost  > 0 ? (grossProfit/totalCost)*100 : 0;
+  const remaining = totalBudget - totalCost;
+
+  return { hardCost,softCost,totalCost,paidAmt,pendingAmt,totalBudget,
+           totalSale,grossProfit,margin,roi,remaining,
+           lotEntries,paid,pending,active };
+}
+
+function renderFinancials(){
+  const lot = document.getElementById("fin-lot-sel").value;
+  const d = getFinData(lot);
+  renderFinKPIs(d, lot);
+  renderIncomeStatement(d, lot);
+  renderCostBreakdown(d);
+  renderCashFlow(d);
+  renderMarginAnalysis(lot);
+  renderPayables(lot);
+  renderSaleInputs(lot);
+}
+window.updateFinancials = renderFinancials;
+document.getElementById("fin-lot-sel").addEventListener("change", renderFinancials);
+
+function renderFinKPIs(d, lot){
+  const el = document.getElementById("fin-kpi-row");
+  const marginClass = d.margin >= 15 ? "pos" : d.margin >= 0 ? "" : "neg";
+  el.innerHTML = `
+    <div class="fin-kpi"><div class="fin-kpi-label">Total Budget</div><div class="fin-kpi-val">${fmt(d.totalBudget)}</div><div class="fin-kpi-sub">allocated cost</div></div>
+    <div class="fin-kpi"><div class="fin-kpi-label">Total Spent</div><div class="fin-kpi-val">${fmt(d.totalCost)}</div><div class="fin-kpi-sub">actual to date</div></div>
+    <div class="fin-kpi"><div class="fin-kpi-label">Remaining Budget</div><div class="fin-kpi-val ${d.remaining<0?"neg":""}">${d.remaining>=0?"+":""}${fmt(d.remaining)}</div><div class="fin-kpi-sub">unspent</div></div>
+    <div class="fin-kpi"><div class="fin-kpi-label">Projected Revenue</div><div class="fin-kpi-val">${d.totalSale>0?fmt(d.totalSale):"—"}</div><div class="fin-kpi-sub">est. sale price</div></div>
+    <div class="fin-kpi"><div class="fin-kpi-label">Gross Margin</div><div class="fin-kpi-val ${marginClass}">${d.totalSale>0?d.margin.toFixed(1)+"%":"—"}</div><div class="fin-kpi-sub">${d.totalSale>0?"on projected sale":""}</div></div>`;
+}
+
+function renderIncomeStatement(d, lot){
+  const lotsToShow = lot ? [lot] : LOTS;
+  const el = document.getElementById("fin-income-statement");
+
+  // Build column headers
+  const headers = lot
+    ? `<th>Line Item</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Variance</th><th class="pct">%</th>`
+    : `<th>Line Item</th>${LOTS.map(l=>`<th class="num">${LOT_LABELS[l].split("—")[1]?.trim()||l}</th>`).join("")}<th class="num">Total</th>`;
+
+  function lotActual(l, cats){
+    return (cats
+      ? entries.filter(e=>e.lot===l&&cats.includes(e.category)&&e.status!=="VOID")
+      : entries.filter(e=>e.lot===l&&e.status!=="VOID")
+    ).reduce((s,e)=>s+(parseFloat(e.actual)||0),0);
+  }
+  function lotBudget(l){
+    return Object.values(budgets[l]||{}).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  }
+
+  function buildRow(label, cats, isHeader=false, isTotal=false){
+    if(lot){
+      const b = cats
+        ? CATEGORIES.filter(c=>cats.includes(c))
+                    .reduce((s,c)=>s+(parseFloat((budgets[lot]||{})[c])||0),0)
+        : lotBudget(lot);
+      const a = cats ? lotActual(lot, cats) : lotActual(lot);
+      const v = b - a;
+      const pct = b > 0 ? ((a/b)*100).toFixed(0)+"%" : "—";
+      const cls = isTotal?"total":isHeader?"section-header":"";
+      return `<tr class="${cls}">
+        <td>${label}</td>
+        <td class="num">${fmt(b)}</td>
+        <td class="num ${a>b?"neg-num":""}">${fmt(a)}</td>
+        <td class="${v>=0?"pos-num":"neg-num"}">${v>=0?"+":""}${fmt(v)}</td>
+        <td class="pct">${pct}</td>
+      </tr>`;
+    } else {
+      const totals = LOTS.map(l=>cats?lotActual(l,cats):lotActual(l));
+      const grand  = totals.reduce((s,v)=>s+v,0);
+      const cls = isTotal?"total":isHeader?"section-header":"";
+      return `<tr class="${cls}">
+        <td>${label}</td>
+        ${totals.map(v=>`<td class="num">${fmt(v)}</td>`).join("")}
+        <td class="num"><strong>${fmt(grand)}</strong></td>
+      </tr>`;
+    }
+  }
+
+  el.innerHTML = `<table class="fin-table">
+    <thead><tr>${headers}</tr></thead>
+    <tbody>
+      ${buildRow("REVENUE","",true)}
+      ${buildRow("Projected Sale Price",null,false,false).replace(
+        /\$0/g, lot ? (salePrices[lot]>0?fmt(salePrices[lot]):"—") :
+        LOTS.map(l=>salePrices[l]>0?fmt(salePrices[l]):"—").join("</td><td class='num'>")+"</td><td class='num'><strong>"+fmt(LOTS.reduce((s,l)=>s+(salePrices[l]||0),0))+"</strong>"
+      )}
+      <tr class="section-header"><td colspan="${lot?5:LOTS.length+2}">COST OF CONSTRUCTION</td></tr>
+      ${buildRow("Hard Costs (Direct)",HARD_COST_CATS)}
+      ${buildRow("Soft Costs (Indirect)",SOFT_COST_CATS)}
+      ${buildRow("TOTAL COST",null,false,true)}
+    </tbody>
+  </table>`;
+}
+
+function renderCostBreakdown(d){
+  const el = document.getElementById("fin-cost-breakdown");
+  const total = d.hardCost + d.softCost;
+  const hardPct = total>0 ? (d.hardCost/total*100) : 0;
+  const softPct = total>0 ? (d.softCost/total*100) : 0;
+
+  // Top 5 categories
+  const lot = document.getElementById("fin-lot-sel").value;
+  const catTotals = {};
+  entries.filter(e=>(lot?e.lot===lot:true)&&e.status!=="VOID").forEach(e=>{
+    catTotals[e.category]=(catTotals[e.category]||0)+(parseFloat(e.actual)||0);
+  });
+  const top5 = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const COLORS = ["#1A1A1A","#C8B89A","#4A7C59","#8B6914","#5B7FA6"];
+
+  el.innerHTML = `
+    <div style="margin-bottom:20px">
+      <div class="cost-row">
+        <div class="cost-row-meta"><span class="cost-row-label">Hard Costs</span><span class="cost-row-val">${fmt(d.hardCost)} &nbsp;<span style="color:var(--gray)">${hardPct.toFixed(0)}%</span></span></div>
+        <div class="cost-bar-track"><div class="cost-bar-fill" style="width:${hardPct}%;background:#1A1A1A"></div></div>
+      </div>
+      <div class="cost-row" style="margin-top:12px">
+        <div class="cost-row-meta"><span class="cost-row-label">Soft Costs</span><span class="cost-row-val">${fmt(d.softCost)} &nbsp;<span style="color:var(--gray)">${softPct.toFixed(0)}%</span></span></div>
+        <div class="cost-bar-track"><div class="cost-bar-fill" style="width:${softPct}%;background:#C8B89A"></div></div>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:16px">
+      <div style="font-size:11px;font-weight:600;color:var(--gray);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px">Top Categories</div>
+      ${top5.map(([cat,val],i)=>{
+        const pct = total>0?(val/total*100):0;
+        return `<div class="cost-row" style="margin-bottom:10px">
+          <div class="cost-row-meta">
+            <span class="cost-row-label" style="font-size:12px">${cat}</span>
+            <span class="cost-row-val">${fmt(val)}</span>
+          </div>
+          <div class="cost-bar-track" style="height:5px"><div class="cost-bar-fill" style="width:${pct}%;background:${COLORS[i]}"></div></div>
+        </div>`;
+      }).join("")}
+    </div>`;
+}
+
+function renderCashFlow(d){
+  const el = document.getElementById("fin-cashflow");
+  const total = d.paidAmt + d.pendingAmt;
+  const remainCash = Math.max(d.totalBudget - total, 0);
+  const items = [
+    { label:"Paid", val:d.paidAmt,    color:"#4A7C59", pct: total>0?(d.paidAmt/d.totalBudget*100):0 },
+    { label:"Pending", val:d.pendingAmt, color:"#8B6914", pct: total>0?(d.pendingAmt/d.totalBudget*100):0 },
+    { label:"Remaining Budget", val:remainCash,  color:"#ADADAD", pct: d.totalBudget>0?(remainCash/d.totalBudget*100):0 }
+  ];
+  const segments = items.map(i=>`<div style="flex:${Math.max(i.pct,2)};background:${i.color};height:100%"></div>`).join("");
+  el.innerHTML = `
+    <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;margin-bottom:18px">${segments}</div>
+    ${items.map(i=>`
+      <div class="cashflow-item">
+        <div class="cashflow-dot" style="background:${i.color}"></div>
+        <span class="cashflow-label">${i.label}</span>
+        <span class="cashflow-val">${fmt(i.val)}</span>
+        <span class="cashflow-pct">${i.pct.toFixed(0)}%</span>
+      </div>`).join("")}
+    <div style="margin-top:16px;padding-top:14px;border-top:2px solid var(--border-strong);display:flex;justify-content:space-between;font-weight:600;font-size:14px">
+      <span>Total Budget</span><span>${fmt(d.totalBudget)}</span>
+    </div>`;
+}
+
+function renderMarginAnalysis(lot){
+  const el = document.getElementById("fin-margin");
+  const lotsToShow = lot ? [lot] : LOTS;
+  el.innerHTML = lotsToShow.map(l=>{
+    const cost = entries.filter(e=>e.lot===l&&e.status!=="VOID").reduce((s,e)=>s+(parseFloat(e.actual)||0),0);
+    const budget = Object.values(budgets[l]||{}).reduce((s,v)=>s+(parseFloat(v)||0),0);
+    const sale = parseFloat(salePrices[l])||0;
+    const profit = sale - cost;
+    const margin = sale>0 ? (profit/sale*100) : null;
+    const roi    = cost>0  ? (profit/cost*100) : null;
+    const projProfit = sale - budget;
+    const projMargin = sale>0 ? (projProfit/sale*100) : null;
+    const isProfitable = profit >= 0;
+    return `<div class="margin-card">
+      <div class="margin-card-lot">${LOT_LABELS[l]}</div>
+      <div class="margin-row"><span>Total Cost (Actual)</span><span>${fmt(cost)}</span></div>
+      <div class="margin-row"><span>Total Budget</span><span>${fmt(budget)}</span></div>
+      <div class="margin-row"><span>Est. Sale Price</span><span>${sale>0?fmt(sale):"<em style='color:var(--gray);font-style:normal'>Not set</em>"}</span></div>
+      ${sale>0?`
+      <div class="margin-row" style="border-top:2px solid var(--border);margin-top:4px;padding-top:8px">
+        <span>Proj. Gross Profit</span><span style="color:${isProfitable?"var(--green)":"var(--red)"};font-weight:700">${projProfit>=0?"+":""}${fmt(projProfit)}</span>
+      </div>
+      <div class="margin-row ${isProfitable?"profit":"loss"}"><span>Net Margin</span><span>${margin!==null?margin.toFixed(1)+"%":"—"}</span></div>
+      <div class="margin-row ${isProfitable?"profit":"loss"}"><span>ROI on Cost</span><span>${roi!==null?roi.toFixed(1)+"%":"—"}</span></div>`:
+      `<div style="color:var(--gray);font-size:12px;margin-top:8px;font-style:italic">Set sale price below to see projections</div>`}
+    </div>`;
+  }).join("");
+}
+
+function renderPayables(lot){
+  const el = document.getElementById("fin-payables");
+  const pending = entries.filter(e=>(lot?e.lot===lot:true)&&e.status==="PENDING")
+                         .sort((a,b)=>(b.actual||0)-(a.actual||0));
+  if(!pending.length){
+    el.innerHTML='<div style="text-align:center;padding:32px;color:var(--gray);font-size:13px">✓ No open payables</div>';
+    return;
+  }
+  const total = pending.reduce((s,e)=>s+(parseFloat(e.actual)||0),0);
+  el.innerHTML=`<div style="overflow-x:auto"><table class="payables-table">
+    <thead><tr><th>Date</th><th>Lot</th><th>Category</th><th>Description</th><th>Vendor</th><th>Invoice #</th><th class="num" style="text-align:right">Amount</th></tr></thead>
+    <tbody>
+      ${pending.map(e=>`<tr>
+        <td>${e.date||"—"}</td>
+        <td><span class="lot-pill">${LOT_LABELS[e.lot]||e.lot}</span></td>
+        <td style="font-size:12px">${e.category||"—"}</td>
+        <td>${e.description||"—"}</td>
+        <td>${e.vendor||"—"}</td>
+        <td style="color:var(--gray);font-size:12px">${e.invoice||"—"}</td>
+        <td style="text-align:right;font-weight:600">${fmt(e.actual)}</td>
+      </tr>`).join("")}
+    </tbody>
+    <tfoot><tr style="background:var(--sand-dark);font-weight:700">
+      <td colspan="6" style="padding:10px 12px">Total Payable</td>
+      <td style="text-align:right;padding:10px 12px">${fmt(total)}</td>
+    </tr></tfoot>
+  </table></div>`;
+}
+
+function renderSaleInputs(lot){
+  const el = document.getElementById("fin-sale-grid");
+  const lotsToShow = lot ? [lot] : LOTS;
+  el.innerHTML = lotsToShow.map(l=>`
+    <div class="fin-sale-item">
+      <label>${LOT_LABELS[l]}</label>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--gray);font-size:14px">$</span>
+        <input class="sale-price-input" type="number" placeholder="0" 
+               data-sale-lot="${l}" 
+               value="${salePrices[l]||""}" 
+               step="1000" inputmode="numeric"/>
+      </div>
+    </div>`).join("");
+}
+
+// Export financials to CSV
+window.exportFinancials = () => {
+  const lot = document.getElementById("fin-lot-sel").value;
+  const rows = [["Date","Lot","Category","Subcategory","Description","Vendor","Invoice","Payment","Status","Budgeted","Actual","Variance"]];
+  const filtered = lot ? entries.filter(e=>e.lot===lot) : entries;
+  filtered.forEach(e=>{
+    const v = (parseFloat(e.budgeted)||0)-(parseFloat(e.actual)||0);
+    rows.push([e.date||"",LOT_LABELS[e.lot]||e.lot,e.category||"",e.subcategory||"",e.description||"",e.vendor||"",e.invoice||"",e.payment||"",e.status||"",e.budgeted||0,e.actual||0,v]);
+  });
+  const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv],{type:"text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href=url; a.download=`MDA_Financials${lot?"_"+lot.replace(/ /g,"_"):""}_${new Date().toISOString().split("T")[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  showToast("CSV exported");
+};
+
+// Hook into showView to render on first open
+const _origShowViewFin = window.showView;
+window.showView = name => {
+  _origShowViewFin(name);
+  if(name==="financials") renderFinancials();
+};
+
+// Also re-render reports to include financials data
+const _origRenderReports = typeof renderReports === "function" ? renderReports : null;
+
 function canEdit(){return currentRole==="admin"||currentRole==="editor";}
 function fmt(v){const n=parseFloat(v)||0;return "$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});}
 function showToast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2800);}
@@ -701,6 +1058,7 @@ tr:hover .row-actions{opacity:1;}
 .icon-btn{width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--black);transition:all .15s;}
 .icon-btn:hover{background:var(--black);color:white;border-color:var(--black);}
 .icon-btn.danger:hover{background:var(--red);border-color:var(--red);}
+.icon-btn.dup:hover{background:var(--sand-accent);border-color:var(--sand-accent);color:white;}
 .table-footer{padding:14px 16px;display:flex;justify-content:space-between;align-items:center;background:var(--sand-dark);border-top:1px solid var(--border);}
 .tfoot-totals{display:flex;gap:28px;}
 .tfoot-item{text-align:right;}
@@ -793,6 +1151,72 @@ tr:hover .row-actions{opacity:1;}
 .ai-remove-btn:hover{background:var(--red);border-color:var(--red);color:white;}
 .btn-confirm-ai{padding:10px 22px;background:var(--green);color:white;border:none;border-radius:8px;font-family:"Inter",sans-serif;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;}
 .btn-confirm-ai:hover{opacity:.85;}
+
+/* ── FINANCIALS ── */
+.fin-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;}
+.fin-toolbar select{padding:9px 12px;border:1.5px solid var(--border-strong);border-radius:8px;font-family:"Inter",sans-serif;font-size:13px;background:var(--white);color:var(--black);outline:none;}
+.fin-toolbar-right{display:flex;gap:10px;}
+.fin-kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px;}
+.fin-kpi{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:16px 18px;}
+.fin-kpi-label{font-size:10px;font-weight:600;color:var(--gray);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px;}
+.fin-kpi-val{font-size:26px;font-family:"Cormorant Garamond",serif;font-weight:500;line-height:1;}
+.fin-kpi-sub{font-size:11px;color:var(--gray);margin-top:4px;}
+.fin-kpi-val.pos{color:var(--green);}
+.fin-kpi-val.neg{color:var(--red);}
+.fin-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.fin-card{background:var(--white);border:1px solid var(--border);border-radius:14px;padding:22px 24px;}
+.fin-card.full{grid-column:1/-1;}
+.fin-card-header{margin-bottom:18px;}
+.fin-card-title{font-family:"Cormorant Garamond",serif;font-size:20px;font-weight:400;color:var(--black);}
+.fin-card-sub{font-size:12px;color:var(--gray);margin-top:3px;}
+/* Income Statement table */
+.fin-table{width:100%;border-collapse:collapse;font-size:13px;}
+.fin-table th{padding:9px 12px;text-align:left;font-size:10px;font-weight:600;letter-spacing:.1em;color:var(--gray);text-transform:uppercase;border-bottom:2px solid var(--border-strong);white-space:nowrap;}
+.fin-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.fin-table tr:last-child td{border-bottom:none;}
+.fin-table tr.section-header td{background:var(--sand-dark);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--gray);padding:7px 12px;}
+.fin-table tr.subtotal td{font-weight:600;background:var(--sand);border-top:1px solid var(--border-strong);}
+.fin-table tr.total td{font-weight:700;font-size:14px;background:var(--black);color:var(--white);border-radius:0;}
+.fin-table tr.total td:first-child{border-radius:0 0 0 8px;}
+.fin-table tr.total td:last-child{border-radius:0 0 8px 0;}
+.fin-table .num{text-align:right;font-variant-numeric:tabular-nums;}
+.fin-table .pos-num{color:var(--green);text-align:right;font-weight:500;}
+.fin-table .neg-num{color:var(--red);text-align:right;font-weight:500;}
+.fin-table .pct{text-align:right;color:var(--gray);font-size:12px;}
+/* Cost breakdown bars */
+.cost-row{margin-bottom:16px;}
+.cost-row-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;}
+.cost-row-label{font-size:13px;font-weight:500;}
+.cost-row-val{font-size:13px;color:var(--gray);}
+.cost-bar-track{height:8px;background:var(--sand-dark);border-radius:4px;overflow:hidden;}
+.cost-bar-fill{height:100%;border-radius:4px;transition:width .5s;}
+/* Cash flow meters */
+.cashflow-item{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);}
+.cashflow-item:last-child{border-bottom:none;}
+.cashflow-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-right:10px;}
+.cashflow-label{font-size:13px;flex:1;}
+.cashflow-val{font-size:15px;font-weight:600;}
+.cashflow-pct{font-size:11px;color:var(--gray);margin-left:8px;}
+/* Margin analysis */
+.fin-margin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+.margin-card{border:1px solid var(--border);border-radius:10px;padding:18px;background:var(--sand);}
+.margin-card-lot{font-family:"Cormorant Garamond",serif;font-size:18px;font-weight:500;margin-bottom:12px;}
+.margin-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;}
+.margin-row:last-child{border-bottom:none;font-weight:600;font-size:14px;}
+.margin-row.profit{color:var(--green);}
+.margin-row.loss{color:var(--red);}
+.sale-price-input{padding:8px 10px;border:1.5px solid var(--border-strong);border-radius:7px;font-family:"Inter",sans-serif;font-size:13px;background:var(--sand);outline:none;width:140px;}
+.sale-price-input:focus{border-color:var(--black);background:var(--white);}
+/* Payables */
+.payables-table{width:100%;border-collapse:collapse;font-size:13px;}
+.payables-table th{padding:9px 12px;text-align:left;font-size:10px;font-weight:600;letter-spacing:.1em;color:var(--gray);text-transform:uppercase;border-bottom:2px solid var(--border-strong);}
+.payables-table td{padding:10px 12px;border-bottom:1px solid var(--border);}
+.payables-table tr:last-child td{border-bottom:none;}
+.payables-table tbody tr:hover{background:var(--sand);}
+.fin-sale-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;}
+.fin-sale-item label{display:block;font-size:10px;font-weight:600;color:var(--gray);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px;}
+@media(max-width:1024px){.fin-kpi-row{grid-template-columns:repeat(3,1fr);}.fin-grid{grid-template-columns:1fr;}.fin-card.full{grid-column:1;}}
+@media(max-width:768px){.fin-kpi-row{grid-template-columns:1fr 1fr;}.fin-kpi-val{font-size:20px;}}
 #toast{position:fixed;bottom:28px;right:28px;z-index:999;background:var(--black);color:var(--white);padding:12px 20px;border-radius:8px;font-size:13px;font-weight:500;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;}
 #toast.show{opacity:1;transform:translateY(0);}
 @media(max-width:768px){
@@ -836,6 +1260,7 @@ tr:hover .row-actions{opacity:1;}
       <button class="nav-btn" data-view="ledger"    onclick="showView('ledger')">Ledger</button>
       <button class="nav-btn" data-view="budget"    onclick="showView('budget')">Budget</button>
       <button class="nav-btn" data-view="reports"   onclick="showView('reports')">Reports</button>
+      <button class="nav-btn" data-view="financials" onclick="showView('financials')">Financials</button>
     </nav>
     <div class="topbar-right">
       <div class="user-chip">
@@ -929,6 +1354,91 @@ tr:hover .row-actions{opacity:1;}
           <div id="monthly-wrap" class="chart-wrap"><canvas id="monthly-canvas"></canvas></div>
         </div>
       </div>
+    </div>
+
+    <!-- FINANCIALS -->
+    <div class="view" id="view-financials">
+      <div class="page-header">
+        <h2>Financial Statements</h2>
+        <p>Construction accounting &mdash; pro forma, P&amp;L, and cash position by project</p>
+      </div>
+
+      <div class="fin-toolbar">
+        <select id="fin-lot-sel">
+          <option value="">All Lots (Consolidated)</option>
+          <option value="LOT 5 WALNEY">Lot 5 &mdash; Walney</option>
+          <option value="LOT 18 SHETLAND">Lot 18 &mdash; Shetland</option>
+          <option value="LOT 21 PEEBLES">Lot 21 &mdash; Peebles</option>
+          <option value="LOT 22 PEEBLES">Lot 22 &mdash; Peebles</option>
+        </select>
+        <div class="fin-toolbar-right">
+          <button class="btn-ghost" onclick="exportFinancials()">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1v8M3 6l3.5 3.5L10 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 10h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Export CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- KPI ROW -->
+      <div class="fin-kpi-row" id="fin-kpi-row"></div>
+
+      <div class="fin-grid">
+
+        <!-- PRO FORMA / INCOME STATEMENT -->
+        <div class="fin-card full">
+          <div class="fin-card-header">
+            <div class="fin-card-title">Pro Forma &mdash; Income Statement</div>
+            <div class="fin-card-sub">Projected vs. actual per lot</div>
+          </div>
+          <div class="fin-section-wrap" id="fin-income-statement"></div>
+        </div>
+
+        <!-- COST BREAKDOWN -->
+        <div class="fin-card">
+          <div class="fin-card-header">
+            <div class="fin-card-title">Cost Structure</div>
+            <div class="fin-card-sub">Hard vs. soft costs</div>
+          </div>
+          <div id="fin-cost-breakdown"></div>
+        </div>
+
+        <!-- CASH FLOW -->
+        <div class="fin-card">
+          <div class="fin-card-header">
+            <div class="fin-card-title">Cash Flow Position</div>
+            <div class="fin-card-sub">Paid vs. pending vs. remaining</div>
+          </div>
+          <div id="fin-cashflow"></div>
+        </div>
+
+        <!-- MARGIN ANALYSIS -->
+        <div class="fin-card full">
+          <div class="fin-card-header">
+            <div class="fin-card-title">Margin &amp; Return Analysis</div>
+            <div class="fin-card-sub">Projected ROI and profit margin per lot</div>
+          </div>
+          <div id="fin-margin" class="fin-margin-grid"></div>
+        </div>
+
+        <!-- PAYABLES TRACKER -->
+        <div class="fin-card full">
+          <div class="fin-card-header">
+            <div class="fin-card-title">Accounts Payable</div>
+            <div class="fin-card-sub">Open invoices and pending payments</div>
+          </div>
+          <div id="fin-payables"></div>
+        </div>
+
+      </div>
+
+      <!-- SALE PRICE INPUT (for margin calc) -->
+      <div id="fin-sale-inputs" style="margin-top:24px;background:var(--white);border:1px solid var(--border);border-radius:12px;padding:22px 24px;">
+        <div class="fin-card-title" style="margin-bottom:4px;">Projected Sale Prices</div>
+        <div class="fin-card-sub" style="margin-bottom:18px;">Enter estimated sale price per lot to calculate projected returns</div>
+        <div class="fin-sale-grid" id="fin-sale-grid"></div>
+        <button class="btn-save" style="margin-top:16px" onclick="saveSalePrices()">Save Projections</button>
+      </div>
+
     </div>
   </main>
 </div>
