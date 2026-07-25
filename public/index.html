@@ -2367,29 +2367,30 @@ tr:hover .row-actions{opacity:1;}
 <div class="modal-overlay" id="entry-modal">
   <div class="modal">
     <div class="modal-header"><h3 id="modal-title">Add Entry</h3><button class="close-btn" onclick="closeModal()">✕</button></div>
-    <!-- PAID BY — prominent at top -->
-    <div id="paidby-banner" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;">
-      <button type="button" id="pb-company-btn" onclick="setPaidBy('Company')"
-        style="padding:14px;border-radius:10px;border:2px solid var(--black);background:var(--black);color:white;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
-        &#x1F3E2; Company Funds
-      </button>
-      <button type="button" id="pb-bank-btn" onclick="setPaidBy('Bank')"
-        style="padding:14px;border-radius:10px;border:2px solid var(--border-strong);background:transparent;color:var(--gray);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
-        &#x1F3E6; Bank Loan Draw
-      </button>
-    </div>
     <select id="f-paidby" style="display:none">
       <option value="Company">Company</option>
       <option value="Bank">Bank</option>
     </select>
-    <div id="f-loan-ref-wrap" style="display:none;margin-bottom:18px;">
-      <div class="form-field">
-        <label>Loan Draw Reference</label>
-        <input type="text" id="f-loan-ref" placeholder="Draw #1, wire ref, etc." style="background:#EDF3FB;border-color:#5B7FA6"/>
-      </div>
-    </div>
 
     <div class="form-grid">
+      <!-- PAID BY — FIRST VISIBLE ROW -->
+      <div class="form-field full" style="margin-bottom:4px">
+        <label>&#x1F4B3; Paid By</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:2px">
+          <button type="button" id="pb-company-btn" onclick="setPaidBy('Company')"
+            style="padding:12px;border-radius:9px;border:2px solid var(--black);background:var(--black);color:white;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;">
+            &#x1F3E2; Company Funds
+          </button>
+          <button type="button" id="pb-bank-btn" onclick="setPaidBy('Bank')"
+            style="padding:12px;border-radius:9px;border:2px solid var(--border-strong);background:transparent;color:var(--gray);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;">
+            &#x1F3E6; Bank Loan Draw
+          </button>
+        </div>
+      </div>
+      <div class="form-field full" id="f-loan-ref-wrap" style="display:none">
+        <label>Loan Draw Reference</label>
+        <input type="text" id="f-loan-ref" placeholder="Draw #1, wire ref, etc." style="background:#EDF3FB;border-color:#5B7FA6;color:#2C5F8A;font-weight:500"/>
+      </div>
       <div class="form-field"><label>Date</label><input type="date" id="f-date"/></div>
       <div class="form-field"><label>Lot</label><select id="f-lot"><option value="LOT 5 WALNEY">Lot 5 — Walney</option><option value="LOT 18 SHETLAND">Lot 18 — Shetland</option><option value="LOT 21 PEEBLES">Lot 21 — Peebles</option><option value="LOT 22 PEEBLES">Lot 22 — Peebles</option></select></div>
       <div class="form-field"><label>Category</label><select id="f-cat"></select></div>
