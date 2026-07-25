@@ -350,15 +350,22 @@ window.saveEntry=async()=>{
 };
 
 // ── Paid By toggle ──
-document.getElementById("f-paidby").addEventListener("change", function(){
-  const wrap = document.getElementById("f-loan-ref-wrap");
-  wrap.style.display = this.value === "Bank" ? "block" : "none";
-  // Visual indicator on select
-  this.style.background = this.value === "Bank" ? "#EDF3FB" : "";
-  this.style.borderColor = this.value === "Bank" ? "#5B7FA6" : "";
-  this.style.color = this.value === "Bank" ? "#5B7FA6" : "";
-  this.style.fontWeight = this.value === "Bank" ? "600" : "";
-});
+window.setPaidBy = val => {
+  document.getElementById("f-paidby").value = val;
+  const isBank = val === "Bank";
+  const lw = document.getElementById("f-loan-ref-wrap");
+  lw.style.display = isBank ? "block" : "none";
+
+  const cBtn = document.getElementById("pb-company-btn");
+  const bBtn = document.getElementById("pb-bank-btn");
+  if(!isBank){
+    cBtn.style.cssText="padding:14px;border-radius:10px;border:2px solid var(--black);background:var(--black);color:white;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;";
+    bBtn.style.cssText="padding:14px;border-radius:10px;border:2px solid var(--border-strong);background:transparent;color:var(--gray);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;";
+  } else {
+    bBtn.style.cssText="padding:14px;border-radius:10px;border:2px solid #5B7FA6;background:#5B7FA6;color:white;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;";
+    cBtn.style.cssText="padding:14px;border-radius:10px;border:2px solid var(--border-strong);background:transparent;color:var(--gray);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;";
+  }
+};
 
 window.closeModal=()=>document.getElementById("entry-modal").classList.remove("open");
 
@@ -381,11 +388,7 @@ window.duplicateEntry=id=>{
   document.getElementById("f-budgeted").value=e.budgeted||"";
   document.getElementById("f-actual").value=e.actual||"";
   document.getElementById("f-notes").value=e.notes||"";
-  const pbSel=document.getElementById("f-paidby");
-  if(pbSel){
-    pbSel.value=e.paidBy||"Company";
-    pbSel.dispatchEvent(new Event("change"));
-  }
+  setPaidBy(e.paidBy||'Company');
   document.getElementById("f-loan-ref").value=e.loanRef||"";
   resetAttachZone("entry");
   removedAttachment.entry=false;
@@ -399,8 +402,7 @@ window.duplicateEntry=id=>{
 };
 function clearForm(){
   ["f-date","f-desc","f-vendor","f-invoice","f-budgeted","f-actual","f-notes","f-loan-ref"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
-  const pb=document.getElementById("f-paidby"); if(pb){pb.value="Company";pb.style.background="";pb.style.borderColor="";pb.style.color="";pb.style.fontWeight="";}
-  const lw=document.getElementById("f-loan-ref-wrap"); if(lw) lw.style.display="none";
+  if(document.getElementById('pb-company-btn')) setPaidBy('Company');
 }
 
 // ── DELETE ──
@@ -611,7 +613,7 @@ Rules: split multi-line invoices into individual items; if only total exists mak
       body.messages=[{role:"user",content:[{type:"image",source:{type:"base64",media_type:attachedFileData.mime,data:attachedFileData.b64}},{type:"text",text:prompt}]}];
     }
     // ── Anthropic API Key ── reemplaza ANTHROPIC_KEY con tu key real sk-ant-...
-    const ANTHROPIC_KEY = "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";
+    const ANTHROPIC_KEY = "REEMPLAZA_AQUI_SK-ANT-XXXX";
     const res=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{
@@ -2365,6 +2367,28 @@ tr:hover .row-actions{opacity:1;}
 <div class="modal-overlay" id="entry-modal">
   <div class="modal">
     <div class="modal-header"><h3 id="modal-title">Add Entry</h3><button class="close-btn" onclick="closeModal()">✕</button></div>
+    <!-- PAID BY — prominent at top -->
+    <div id="paidby-banner" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;">
+      <button type="button" id="pb-company-btn" onclick="setPaidBy('Company')"
+        style="padding:14px;border-radius:10px;border:2px solid var(--black);background:var(--black);color:white;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+        &#x1F3E2; Company Funds
+      </button>
+      <button type="button" id="pb-bank-btn" onclick="setPaidBy('Bank')"
+        style="padding:14px;border-radius:10px;border:2px solid var(--border-strong);background:transparent;color:var(--gray);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+        &#x1F3E6; Bank Loan Draw
+      </button>
+    </div>
+    <select id="f-paidby" style="display:none">
+      <option value="Company">Company</option>
+      <option value="Bank">Bank</option>
+    </select>
+    <div id="f-loan-ref-wrap" style="display:none;margin-bottom:18px;">
+      <div class="form-field">
+        <label>Loan Draw Reference</label>
+        <input type="text" id="f-loan-ref" placeholder="Draw #1, wire ref, etc." style="background:#EDF3FB;border-color:#5B7FA6"/>
+      </div>
+    </div>
+
     <div class="form-grid">
       <div class="form-field"><label>Date</label><input type="date" id="f-date"/></div>
       <div class="form-field"><label>Lot</label><select id="f-lot"><option value="LOT 5 WALNEY">Lot 5 — Walney</option><option value="LOT 18 SHETLAND">Lot 18 — Shetland</option><option value="LOT 21 PEEBLES">Lot 21 — Peebles</option><option value="LOT 22 PEEBLES">Lot 22 — Peebles</option></select></div>
@@ -2375,16 +2399,6 @@ tr:hover .row-actions{opacity:1;}
       <div class="form-field"><label>Invoice #</label><input type="text" id="f-invoice" placeholder="INV-0001"/></div>
       <div class="form-field"><label>Payment Method</label><select id="f-payment"><option>Check</option><option>Wire</option><option>ACH</option><option>Credit Card</option><option>Cash</option><option>Zelle</option><option>Bank Loan Draw</option></select></div>
       <div class="form-field"><label>Status</label><select id="f-status"><option value="PAID">Paid</option><option value="PENDING">Pending</option><option value="VOID">Void</option></select></div>
-      <div class="form-field"><label>Paid By</label>
-        <select id="f-paidby" style="border-color:var(--border-strong)">
-          <option value="Company">&#x1F3E2; Company (Our Funds)</option>
-          <option value="Bank">&#x1F3E6; Bank (Loan Draw)</option>
-        </select>
-      </div>
-      <div class="form-field" id="f-loan-ref-wrap" style="display:none">
-        <label>Loan Draw Reference</label>
-        <input type="text" id="f-loan-ref" placeholder="Draw #1, Wire ref, etc."/>
-      </div>
       <div class="form-field"><label>Budgeted Cost ($)</label><input type="number" id="f-budgeted" placeholder="0.00" step="0.01"/></div>
       <div class="form-field"><label>Actual Cost ($)</label><input type="number" id="f-actual" placeholder="0.00" step="0.01"/></div>
       <div class="form-field full"><label>Notes</label><textarea id="f-notes" placeholder="PO numbers, notes, etc."></textarea></div>
