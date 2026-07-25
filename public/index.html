@@ -611,7 +611,7 @@ Rules: split multi-line invoices into individual items; if only total exists mak
       body.messages=[{role:"user",content:[{type:"image",source:{type:"base64",media_type:attachedFileData.mime,data:attachedFileData.b64}},{type:"text",text:prompt}]}];
     }
     // ── Anthropic API Key ── reemplaza ANTHROPIC_KEY con tu key real sk-ant-...
-    const ANTHROPIC_KEY = "REEMPLAZA_AQUI_SK-ANT-XXXX";
+    const ANTHROPIC_KEY = "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";
     const res=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{
