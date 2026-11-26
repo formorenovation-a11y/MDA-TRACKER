@@ -1,6 +1,6 @@
 {
   "name": "mda-capital-tracker",
-  "version": "3.0.0",
+  "version": "3.3.0",
   "description": "MDA Capital Group Construction Tracker — phase-based cost taxonomy, labor/material split, pro forma P&L",
   "main": "server.js",
   "scripts": {
