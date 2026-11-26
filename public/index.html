@@ -960,6 +960,33 @@ function renderDashboard(){
 }
 window.filterToLot=lot=>{document.getElementById("filter-lot").value=lot;showView("ledger");};
 
+// ── STATUS and PAID BY: two separate facts about an entry ──
+//   Status  = where the invoice stands: paid, pending or void.
+//   Paid by = whose money covers it: the company's own funds, or the
+//             lender paying it out of the construction loan.
+const STATUS_LABEL = {PAID:"Paid", PENDING:"Pending", VOID:"Void"};
+const STATUS_CLASS = {PAID:"status-paid", PENDING:"status-pending", VOID:"status-void"};
+const PAYER_LABEL  = {Company:"Company", Bank:"Bank loan"};
+const payerOf = e => e.paidBy==="Bank" ? "Bank" : "Company";
+
+// cleared = a bank transaction stands behind this entry
+function statusPill(status, cleared){
+  if(!STATUS_LABEL[status]) return "—";
+  const check = cleared && status==="PAID"
+    ? `<svg class="st-check" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 5.2l2 2 4-4.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` : "";
+  const tip = check ? ` title="Paid — matched to a transaction in the bank book"` : "";
+  return `<span class="status-badge ${STATUS_CLASS[status]}"${tip}><i class="st-dot"></i>${STATUS_LABEL[status]}${check}</span>`;
+}
+function payerPill(e){
+  if(e.status==="VOID") return `<span class="payer-none">—</span>`;
+  const who = payerOf(e), due = e.status!=="PAID";
+  const tip = due ? ` title="Not paid yet — ${PAYER_LABEL[who]} is expected to pay it"` : "";
+  const ref = who==="Bank" && e.loanRef ? `<span class="payer-ref">${esc(e.loanRef)}</span>` : "";
+  return `<span class="payer-pill payer-${who.toLowerCase()}${due?" payer-due":""}"${tip}>${PAYER_LABEL[who]}</span>${ref}`;
+}
+// Plain-text version for the printed report and the CSV.
+const payerText = e => e.status==="VOID" ? "" : PAYER_LABEL[payerOf(e)];
+
 // ── LEDGER ──
 function renderLedger(){
   const lotF=document.getElementById("filter-lot").value;
@@ -977,7 +1004,6 @@ function renderLedger(){
     if(search&&!`${e.description||""} ${e.vendor||""} ${e.invoice||""} ${e.subcategory||""} ${e.category||""}`.toLowerCase().includes(search)) return false;
     return true;
   });
-  const stM={PAID:"status-paid",PENDING:"status-pending",VOID:"status-void"};
   const cleared=claimedRecords();           // entries a bank transaction stands behind
   const tbody=document.getElementById("ledger-body");
   tbody.innerHTML=filtered.length?filtered.map(e=>{
@@ -992,7 +1018,8 @@ function renderLedger(){
       <td>${e.vendor||"—"}</td>
       <td style="color:var(--gray);font-size:12px">${e.invoice||"—"}</td>
       <td style="color:var(--gray);font-size:12px">${e.payment||"—"}</td>
-      <td><span class="status-badge ${stM[e.status]||""}">${e.status||"—"}</span>${e.paidBy==="Bank"?'<span class="bank-badge">BANK</span>':""}${cleared.has(e.id)?'<span class="link-badge" title="Matched to a bank transaction">CLEARED</span>':""}</td>
+      <td>${statusPill(e.status, cleared.has(e.id))}</td>
+      <td class="cell-payer">${payerPill(e)}</td>
       <td>${fmt(e.budgeted)}</td>
       <td><strong>${fmt(e.actual)}</strong></td>
       <td class="${vari>=0?"variance-pos":"variance-neg"}">${fmtSigned(vari)}</td>
@@ -1953,7 +1980,7 @@ function renderOpex() {
   document.getElementById("opex-total").textContent = fmt(total);
   document.getElementById("opex-deductible").textContent = fmt(deductible);
 
-  const stM = {PAID:"status-paid",PENDING:"status-pending",VOID:"status-void"};
+  const cleared = claimedRecords();
   const tbody = document.getElementById("opex-body");
   tbody.innerHTML = filtered.length ? filtered.map(e=>`<tr>
     <td>${e.date||"—"}</td>
@@ -1962,7 +1989,7 @@ function renderOpex() {
     <td>${e.description||"—"} ${e.attachment?attachIcon(e.attachment):""}</td>
     <td>${e.vendor||"—"}</td>
     <td style="color:var(--gray);font-size:12px">${e.payment||"—"}</td>
-    <td><span class="status-badge ${stM[e.status]||""}">${e.status||"—"}</span></td>
+    <td>${statusPill(e.status, cleared.has(e.id))}</td>
     <td><strong>${fmt(e.amount)}</strong></td>
     <td><span class="deductible-badge ${e.deductible?"deductible-yes":"deductible-no"}">${e.deductible?"Yes":"No"}</span></td>
     <td>${canEdit()?`<div class="row-actions">
@@ -3195,9 +3222,11 @@ function reportRows(lot){
   const from = document.getElementById("rep-from").value;
   const to   = document.getElementById("rep-to").value;
   const st   = document.getElementById("rep-status").value;
+  const who  = document.getElementById("rep-paidby").value;
   return entries.filter(e=>{
     if(e.lot !== lot) return false;
     if(st === "__nonvoid" ? e.status === "VOID" : (st && e.status !== st)) return false;
+    if(who && payerOf(e) !== who) return false;
     const d = e.date || "";
     if(from && d && d < from) return false;
     if(to   && d && d > to)   return false;
@@ -3206,43 +3235,45 @@ function reportRows(lot){
   }).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
 }
 
+// One printed row. Voided entries are listed for the record but struck
+// through, and they never reach a subtotal.
+function reportRow(e){
+  const void_ = e.status === "VOID";
+  const ref = payerOf(e)==="Bank" && e.loanRef && !void_ ? `<span class="rp-ref">${esc(e.loanRef)}</span>` : "";
+  return `<tr${void_?' class="rp-void"':""}>
+    <td class="rp-date">${e.date||"&mdash;"}</td>
+    <td>${e.subcategory||"&mdash;"}</td>
+    <td class="rp-type">${COST_TYPE_SHORT[e.costType]||"&mdash;"}</td>
+    <td>${e.description||"&mdash;"}</td>
+    <td>${e.vendor||"&mdash;"}</td>
+    <td class="rp-dim">${e.invoice||"&mdash;"}</td>
+    <td class="rp-dim">${e.payment||"&mdash;"}</td>
+    <td class="rp-payer${payerOf(e)==="Bank"&&!void_?" rp-bank":""}">${payerText(e)||"&mdash;"}${ref}</td>
+    <td class="rp-dim">${STATUS_LABEL[e.status]||"&mdash;"}</td>
+    <td class="num">${fmt2(e.actual)}</td>
+  </tr>`;
+}
+
 function reportSection(lot){
   const rows = reportRows(lot);
+  const live = rows.filter(Acct.live);
   const amount = e => e.actual;
-  const spent = Acct.total(rows, amount);
+  const sum = list => Acct.total(list, amount);
+  const spent = sum(live);
   const budg  = budgetFor(lot, null);
-  const paid    = Acct.total(rows.filter(e=>e.status==="PAID"), amount);
-  const pending = Acct.total(rows.filter(e=>e.status==="PENDING"), amount);
+  const paid  = live.filter(e=>e.status==="PAID");
+  const byCompany = sum(paid.filter(e=>payerOf(e)==="Company"));
+  const byBank    = sum(paid.filter(e=>payerOf(e)==="Bank"));
+  const pending   = sum(live.filter(e=>e.status==="PENDING"));
+  const voided    = rows.length - live.length;
   const byType = {};
-  COST_TYPES.forEach(t=>{ byType[t] = Acct.total(rows.filter(e=>(e.costType||"OTHER")===t), amount); });
+  COST_TYPES.forEach(t=>{ byType[t] = sum(live.filter(e=>(e.costType||"OTHER")===t)); });
 
-  const body = PHASES.map(p=>{
-    const cat = catName(p);
-    const pr = rows.filter(e=>e.category===cat);
-    if(!pr.length) return "";
-    const sub = Acct.total(pr, amount);
-    return `<tr class="rp-phase"><td colspan="8">${p.code} &middot; ${p.name}</td><td class="num">${fmt2(sub)}</td></tr>`
-      + pr.map(e=>`<tr>
-          <td class="rp-date">${e.date||"&mdash;"}</td>
-          <td>${e.subcategory||"&mdash;"}</td>
-          <td class="rp-type">${COST_TYPE_SHORT[e.costType]||"&mdash;"}</td>
-          <td>${e.description||"&mdash;"}</td>
-          <td>${e.vendor||"&mdash;"}</td>
-          <td class="rp-dim">${e.invoice||"&mdash;"}</td>
-          <td class="rp-dim">${e.payment||"&mdash;"}${e.paidBy==="Bank"?" &middot; bank":""}</td>
-          <td class="rp-dim">${e.status||"&mdash;"}</td>
-          <td class="num">${fmt2(e.actual)}</td>
-        </tr>`).join("");
-  }).join("");
-
-  const orphans = rows.filter(e=>!PHASE_BY_CAT[e.category]);
-  const orphanBlock = orphans.length
-    ? `<tr class="rp-phase"><td colspan="8">Unclassified</td><td class="num">${fmt2(Acct.total(orphans, amount))}</td></tr>`
-      + orphans.map(e=>`<tr><td class="rp-date">${e.date||"&mdash;"}</td><td>${e.subcategory||"&mdash;"}</td><td class="rp-type">&mdash;</td>
-          <td>${e.description||"&mdash;"}</td><td>${e.vendor||"&mdash;"}</td><td class="rp-dim">${e.invoice||"&mdash;"}</td>
-          <td class="rp-dim">${e.payment||"&mdash;"}</td><td class="rp-dim">${e.status||"&mdash;"}</td>
-          <td class="num">${fmt2(e.actual)}</td></tr>`).join("")
-    : "";
+  const group = (title, list) => !list.length ? "" :
+    `<tr class="rp-phase"><td colspan="9">${title}</td><td class="num">${fmt2(sum(list.filter(Acct.live)))}</td></tr>`
+    + list.map(reportRow).join("");
+  const body = PHASES.map(p => group(`${p.code} &middot; ${p.name}`, rows.filter(e=>e.category===catName(p)))).join("")
+             + group("Unclassified", rows.filter(e=>!PHASE_BY_CAT[e.category]));
 
   const typeLine = COST_TYPES.filter(t=>byType[t]).map(t=>`${t} ${fmt(byType[t])}`).join("　·　");
 
@@ -3250,23 +3281,32 @@ function reportSection(lot){
     <div class="rp-lot-head">
       <h2>${LOT_LABELS[lot]||lot}</h2>
       <div class="rp-stats">
-        <div><span>Transactions</span><strong>${rows.length}</strong></div>
+        <div><span>Transactions</span><strong>${live.length}</strong></div>
         <div><span>Budget</span><strong>${fmt(budg)}</strong></div>
         <div><span>Spent</span><strong>${fmt2(spent)}</strong></div>
         <div><span>Variance</span><strong class="${budg<spent?"rp-neg":"rp-pos"}">${fmtSigned(Acct.minus(budg,spent))}</strong></div>
-        <div><span>Paid</span><strong>${fmt2(paid)}</strong></div>
-        <div><span>Pending</span><strong>${fmt2(pending)}</strong></div>
+      </div>
+      <div class="rp-stats rp-who">
+        <div><span>Paid by company</span><strong>${fmt2(byCompany)}</strong></div>
+        <div><span>Paid by bank loan</span><strong class="rp-bank">${fmt2(byBank)}</strong></div>
+        <div><span>Pending &mdash; not paid yet</span><strong>${fmt2(pending)}</strong></div>
       </div>
       ${typeLine?`<div class="rp-typeline">${typeLine}</div>`:""}
     </div>
     ${rows.length?`<table class="rp-table">
       <thead><tr>
         <th>Date</th><th>Line item</th><th>Type</th><th>Description</th>
-        <th>Vendor</th><th>Invoice</th><th>Payment</th><th>Status</th><th class="num">Amount</th>
+        <th>Vendor</th><th>Invoice</th><th>Payment</th><th>Paid by</th><th>Status</th><th class="num">Amount</th>
       </tr></thead>
-      <tbody>${body}${orphanBlock}</tbody>
-      <tfoot><tr><td colspan="8">Total &mdash; ${LOT_LABELS[lot]||lot}</td><td class="num">${fmt2(spent)}</td></tr></tfoot>
-    </table>`:`<p class="rp-empty">No transactions in this range.</p>`}
+      <tbody>${body}</tbody>
+      <tfoot>
+        <tr><td colspan="9">Total &mdash; ${LOT_LABELS[lot]||lot}</td><td class="num">${fmt2(spent)}</td></tr>
+        <tr class="rp-split"><td colspan="9">Paid by company</td><td class="num">${fmt2(byCompany)}</td></tr>
+        <tr class="rp-split"><td colspan="9">Paid by bank loan</td><td class="num">${fmt2(byBank)}</td></tr>
+        <tr class="rp-split"><td colspan="9">Pending &mdash; not paid yet</td><td class="num">${fmt2(pending)}</td></tr>
+      </tfoot>
+    </table>${voided?`<p class="rp-note">${voided} voided entr${voided===1?"y is":"ies are"} listed struck through and not counted in any total.</p>`:""}`
+    :`<p class="rp-empty">No transactions in this range.</p>`}
   </section>`;
 }
 
@@ -3276,7 +3316,9 @@ window.buildReport = () => {
   const from = document.getElementById("rep-from").value;
   const to   = document.getElementById("rep-to").value;
   const st   = document.getElementById("rep-status").value;
-  const stLabel = st === "__nonvoid" ? "excluding voided" : st ? st.toLowerCase()+" only" : "all statuses";
+  const who  = document.getElementById("rep-paidby").value;
+  const stLabel = (st === "__nonvoid" ? "excluding voided" : st ? st.toLowerCase()+" only" : "all statuses")
+                + (who ? ` · paid by ${PAYER_LABEL[who].toLowerCase()} only` : "");
   const range = from && to ? `${from} to ${to}` : from ? `from ${from}` : to ? `through ${to}` : "all dates";
 
   document.getElementById("report-sheet").innerHTML = `
@@ -3293,9 +3335,12 @@ window.buildReport = () => {
     </header>
     ${lots.map(reportSection).join("")}
     ${lots.length>1?(()=>{
-      const all = lots.flatMap(reportRows);
-      return `<section class="rp-grand"><span>Portfolio total &mdash; ${lots.length} lots, ${all.length} transactions</span>
-        <strong>${fmt2(Acct.total(all, e=>e.actual))}</strong></section>`;
+      const all  = lots.flatMap(reportRows).filter(Acct.live);
+      const paid = all.filter(e=>e.status==="PAID");
+      const sum  = list => fmt2(Acct.total(list, e=>e.actual));
+      return `<section class="rp-grand"><span>Portfolio total &mdash; ${lots.length} lots, ${all.length} transactions
+          <em>Company ${sum(paid.filter(e=>payerOf(e)==="Company"))} &middot; Bank loan ${sum(paid.filter(e=>payerOf(e)==="Bank"))} &middot; Pending ${sum(all.filter(e=>e.status==="PENDING"))}</em></span>
+        <strong>${sum(all)}</strong></section>`;
     })():""}`;
   document.getElementById("report-sheet-wrap").style.display = "block";
 };
@@ -3321,10 +3366,11 @@ window.printReport = () => {
 window.exportReportCsv = () => {
   const pick = document.getElementById("rep-lot").value;
   const lots = pick === "__all" ? LOTS : [pick];
-  const rows = [["Lot","Date","Phase","Line item","Cost type","Description","Vendor","Invoice","Payment","Status","Budgeted","Actual"]];
+  const rows = [["Lot","Date","Phase","Line item","Cost type","Description","Vendor","Invoice","Payment","Paid by","Loan draw ref","Status","Budgeted","Actual"]];
   lots.forEach(lot => reportRows(lot).forEach(e=>{
     rows.push([LOT_LABELS[lot]||lot, e.date||"", e.category||"", e.subcategory||"", e.costType||"",
-               e.description||"", e.vendor||"", e.invoice||"", e.payment||"", e.status||"",
+               e.description||"", e.vendor||"", e.invoice||"", e.payment||"",
+               payerText(e), payerOf(e)==="Bank" ? e.loanRef||"" : "", e.status||"",
                parseFloat(e.budgeted)||0, parseFloat(e.actual)||0]);
   }));
   const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
@@ -3867,10 +3913,23 @@ td{padding:11px 12px;border-bottom:1px solid var(--border);font-size:13px;color:
 tr:last-child td{border-bottom:none;}
 tbody tr:hover{background:var(--sand);}
 .lot-pill{display:inline-block;padding:2px 8px;background:var(--sand-dark);border-radius:4px;font-size:11px;font-weight:500;white-space:nowrap;}
-.status-badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;}
+.status-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 8px;border-radius:20px;font-size:11.5px;font-weight:600;white-space:nowrap;}
+.status-badge .st-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;}
+.status-badge .st-check{flex:none;margin-left:-1px;}
+.cell-payer{white-space:nowrap;}
+#view-ledger .table-wrap{overflow-x:auto;}
+#view-ledger table{min-width:1320px;}
+#view-ledger td:first-child{white-space:nowrap;font-variant-numeric:tabular-nums;}
+.payer-pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:5px;font-size:11.5px;font-weight:600;white-space:nowrap;border:1px solid transparent;}
+.payer-company{background:var(--sand-dark);color:var(--black);}
+.payer-bank{background:#EDF3FB;color:#2C5F8A;border-color:#BDD0E8;}
+.payer-pill.payer-due{background:transparent;border-style:dashed;border-color:var(--border-strong);color:var(--gray);font-weight:500;}
+.payer-pill.payer-bank.payer-due{border-color:#BDD0E8;color:#5B7FA6;}
+.payer-ref{display:block;margin-top:3px;font-size:10.5px;color:var(--gray);max-width:120px;overflow:hidden;text-overflow:ellipsis;}
+.payer-none{color:var(--gray-light);}
 .status-paid{background:#E8F0EA;color:var(--green);}
 .status-pending{background:#F5EDD8;color:var(--yellow);}
-.status-void{background:var(--sand-dark);color:var(--gray-light);}
+.status-void{background:var(--sand-dark);color:var(--gray);}
 .variance-pos{color:var(--green);}
 .variance-neg{color:var(--red);}
 .row-actions{display:flex;gap:6px;opacity:0;transition:opacity .15s;}
@@ -4355,7 +4414,7 @@ optgroup option{font-size:13px;font-weight:400;letter-spacing:0;text-transform:n
 .stmt-table th:nth-child(11),.stmt-table td:nth-child(11){width:34px;}
 .stmt-table td{padding-left:6px;padding-right:6px;}
 /* ══ Expense report ══ */
-.rep-controls{display:grid;grid-template-columns:1.6fr 1fr 1fr 1.2fr auto;gap:12px;align-items:end;
+.rep-controls{display:grid;grid-template-columns:1.4fr 1fr 1fr 1.1fr 1.2fr auto;gap:12px;align-items:end;
   padding-bottom:18px;border-bottom:1px solid var(--border);margin-bottom:20px;}
 .rep-actions{display:flex;gap:8px;}
 .report-sheet{background:var(--white);color:var(--black);padding:34px 38px;border:1px solid var(--border);border-radius:10px;}
@@ -4385,6 +4444,14 @@ optgroup option{font-size:13px;font-weight:400;letter-spacing:0;text-transform:n
 .rp-type{font-size:9.5px;font-weight:700;letter-spacing:.05em;color:var(--gray);}
 .rp-dim{color:var(--gray);font-size:11px;}
 .rp-empty{color:var(--gray);font-size:13px;padding:14px 0;}
+.rp-who{padding-top:8px;border-top:1px solid var(--border);margin-top:2px;}
+.rp-bank{color:#2C5F8A;}
+.rp-payer{font-weight:600;white-space:nowrap;}
+.rp-ref{display:block;font-weight:400;font-size:10px;color:var(--gray);white-space:normal;}
+.rp-table tr.rp-void td{color:var(--gray-light);text-decoration:line-through;}
+.rp-table tfoot tr.rp-split td{padding:3px 8px;font-weight:500;font-size:11.5px;color:var(--gray);border-top:none;}
+.rp-note{font-size:10.5px;color:var(--gray);margin-top:8px;}
+.rp-grand em{display:block;font-style:normal;font-size:11px;font-weight:400;opacity:.72;margin-top:4px;}
 .rp-grand{display:flex;justify-content:space-between;align-items:baseline;gap:20px;
   padding:14px 16px;background:var(--black);color:var(--white);border-radius:8px;font-size:13px;}
 .rp-grand strong{font-size:18px;font-variant-numeric:tabular-nums;}
@@ -4590,7 +4657,7 @@ optgroup option{font-size:13px;font-weight:400;letter-spacing:0;text-transform:n
         <select id="filter-cat"><option value="">All Phases</option></select>
         <select id="filter-costtype"><option value="">All Cost Types</option></select>
         <select id="filter-status"><option value="">All Statuses</option><option value="PAID">Paid</option><option value="PENDING">Pending</option><option value="VOID">Void</option></select>
-        <select id="filter-paidby"><option value="">All Sources</option><option value="Company">&#x1F3E2; Company</option><option value="Bank">&#x1F3E6; Bank Loan</option></select>
+        <select id="filter-paidby"><option value="">Paid by — anyone</option><option value="Company">Paid by company</option><option value="Bank">Paid by bank loan</option></select>
         <input type="text" id="filter-search" placeholder="Search vendor, description…"/>
         <div class="ml-auto" style="display:flex;gap:10px;">
           <button class="btn-ai" onclick="openAIModal()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.5 3.5L12 5l-2.5 2.5.5 3.5L7 9.5 4 11l.5-3.5L2 5l3.5-.5L7 1z" stroke="white" stroke-width="1.2"/></svg>Scan Invoice with AI</button>
@@ -4600,7 +4667,7 @@ optgroup option{font-size:13px;font-weight:400;letter-spacing:0;text-transform:n
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Lot</th><th>Phase</th><th>Line Item</th><th>Type</th><th>Description</th><th>Vendor</th><th>Invoice #</th><th>Payment</th><th>Status</th><th>Budgeted</th><th class="num">Actual</th><th class="num">Variance</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Lot</th><th>Phase</th><th>Line Item</th><th>Type</th><th>Description</th><th>Vendor</th><th>Invoice #</th><th>Payment</th><th>Status</th><th>Paid by</th><th>Budgeted</th><th class="num">Actual</th><th class="num">Variance</th><th></th></tr></thead>
           <tbody id="ledger-body"></tbody>
         </table>
         <div class="table-footer">
@@ -5175,6 +5242,13 @@ optgroup option{font-size:13px;font-weight:400;letter-spacing:0;text-transform:n
           <option value="">Everything</option>
           <option value="PAID">Paid only</option>
           <option value="PENDING">Pending only</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Paid by</label>
+        <select id="rep-paidby" onchange="buildReport()">
+          <option value="">Company and bank loan</option>
+          <option value="Company">Company only</option>
+          <option value="Bank">Bank loan only</option>
         </select>
       </div>
       <div class="rep-actions">
