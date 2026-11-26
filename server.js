@@ -4611,7 +4611,7 @@ optgroup option{font-size:13px;font-weight:400;letter-spacing:0;text-transform:n
     </div>
     <h2>Sign in</h2>
     <p>Access restricted to authorized partners</p>
-    <div style="display:inline-block;margin-bottom:16px;padding:4px 12px;background:#4A7C59;color:white;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.05em;">VERSION 2.0 &mdash; PAID BY ENABLED</div>
+    <div style="display:inline-block;margin-bottom:16px;padding:4px 12px;background:#4A7C59;color:white;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.05em;">VERSION 3.0</div>
     <div class="auth-field"><label>Email</label><input type="email" id="auth-email" placeholder="you@mdacapitalgroup.com" autocomplete="email"/></div>
     <div class="auth-field"><label>Password</label><input type="password" id="auth-pass" placeholder="••••••••" autocomplete="current-password"/></div>
     <button class="btn-primary" onclick="doLogin()">Continue</button>
